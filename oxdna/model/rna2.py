@@ -51,6 +51,19 @@ HB_F4_THETA4 = (0.46, 0.133855, math.pi, 0.7, 3.10559)
 HB_F4_THETA78 = (4.0, 17.0526, math.pi / 2.0, 0.45, 0.555556)  # theta7 == theta8
 HB_R_CUT = HYDR_RCHIGH + 2.0 * POS_BASE  # ~1.5
 
+# --- sequence-dependent tables (seq_rna.txt; RNAInteraction.cpp:359, HB per-pair) ---
+# HB per-pair (incl. G-U wobble; U stored as T). Stacking: STCK_<pair> * (1 + kT*ST_T_DEP).
+ST_T_DEP = 1.97561
+STCK_SEQ = {
+    ("G", "C"): 1.27562, ("C", "G"): 1.60302, ("G", "G"): 1.49422, ("C", "C"): 1.47301,
+    ("G", "A"): 1.62114, ("T", "C"): 1.16724, ("A", "G"): 1.39374, ("C", "T"): 1.47145,
+    ("T", "G"): 1.28576, ("C", "A"): 1.58294, ("G", "T"): 1.57119, ("A", "C"): 1.21041,
+    ("A", "T"): 1.38529, ("T", "A"): 1.24573, ("A", "A"): 1.31585, ("T", "T"): 1.17518,
+}
+HYDR_SEQ = {("A", "T"): 0.820419, ("T", "A"): 0.820419,   # A-U
+            ("C", "G"): 1.06444, ("G", "C"): 1.06444,     # G-C
+            ("G", "T"): 0.510558, ("T", "G"): 0.510558}   # G-U wobble
+
 # --- cross-stacking (rna_model.h; RNA drops the f4(theta4) factor) ---
 # f2: (K, r0, rc, rlow, rhigh, rclow, rchigh, blow, bhigh)
 CRST_F2 = (59.9626, 0.5, 0.6, 0.42, 0.58, 0.375, 0.625, -0.888889, -0.888889)
@@ -131,16 +144,29 @@ STCK_F4_THETAB2 = (1.3, 6.4381, 0.0, 0.8, 0.961538)    # same shape as thetaB1
 STCK_F5_PHI1 = (2.0, 10.9032, -0.769231, -0.65)        # phi1 == phi2
 
 
-def stacking_params(t_kelvin=296.15):
-    """oxRNA2 bonded-stacking sub-dict (sequence-averaged)."""
+def sequence_stacking_eps_table(t_kelvin=296.15):
+    """oxRNA2 sequence-dependent stacking epsilon (RNAInteraction.cpp:359)."""
     kT = dna1.kT_from_temperature(t_kelvin)
-    eps = STCK_BASE_EPS + STCK_FACT_EPS * kT
+    factor = 1.0 + kT * ST_T_DEP
+    return [[STCK_SEQ[(DNA_BASES[i], DNA_BASES[j])] * factor for j in range(4)]
+            for i in range(4)]
+
+
+def stacking_params(t_kelvin=296.15, average=True):
+    """oxRNA2 bonded-stacking sub-dict. ``average=False`` uses the per-pair table."""
+    kT = dna1.kT_from_temperature(t_kelvin)
     shift = (1.0 - math.exp(-(STCK_RC - STCK_R0) * STCK_A)) ** 2
     f1 = (STCK_A, STCK_R0, STCK_RLOW, STCK_RHIGH, STCK_RCLOW, STCK_RCHIGH,
           STCK_BLOW, STCK_BHIGH, shift)
+    if average:
+        eps = STCK_BASE_EPS + STCK_FACT_EPS * kT
+        eps_flat = (eps,) * 16
+    else:
+        table = sequence_stacking_eps_table(t_kelvin)
+        eps_flat = tuple(table[i][j] for i in range(4) for j in range(4))
     return dict(
         stack_enabled=True, stack_rna=True,
-        stack_f1=f1, stack_eps=(eps,) * 16,
+        stack_f1=f1, stack_eps=eps_flat,
         stack_f4_t5=STCK_F4_THETA5, stack_f5_p1=STCK_F5_PHI1,
         stack_3_site=STACK_3_SITE, stack_5_site=STACK_5_SITE,
         stack_bbvector_3=BBVECTOR_3, stack_bbvector_5=BBVECTOR_5,
@@ -148,7 +174,7 @@ def stacking_params(t_kelvin=296.15):
     )
 
 
-def bonded_force(bond_type="backbone", temperature=296.15):
+def bonded_force(bond_type="backbone", temperature=296.15, average=True):
     """oxRNA2 bonded force: FENE + bonded excluded volume + (RNA) stacking."""
     force = OxDNABonded()
     params = dict(
@@ -157,7 +183,7 @@ def bonded_force(bond_type="backbone", temperature=296.15):
         excl_eps=EXCL_EPS,
         bexc_base_base=EXCL[2], bexc_base_back=EXCL[3], bexc_back_base=EXCL[4],
     )
-    params.update(stacking_params(temperature))
+    params.update(stacking_params(temperature, average=average))
     force.params[bond_type] = params
     return force
 
@@ -174,15 +200,22 @@ def excluded_volume(nlist, types=DNA_BASES, r_cut=EXCVOL_R_CUT):
     return force
 
 
-def hydrogen_bonding(nlist, types=DNA_BASES, r_cut=HB_R_CUT):
-    """oxRNA2 hydrogen bonding (sequence-averaged, Watson-Crick complementary only)."""
+def hb_epsilon(t1, t2, average=True):
+    """oxRNA2 HB epsilon for a type pair. Averaged uses HYDR_EPS for WC pairs;
+    sequence-dependent uses the per-pair table (incl. G-U wobble)."""
+    if average:
+        return HYDR_EPS if dna1.is_complementary(t1, t2) else 0.0
+    return HYDR_SEQ.get((t1, t2), 0.0)
+
+
+def hydrogen_bonding(nlist, types=DNA_BASES, average=True, r_cut=HB_R_CUT):
+    """oxRNA2 hydrogen bonding (averaged, or per-pair with G-U wobble when average=False)."""
     force = HydrogenBonding(nlist=nlist, default_r_cut=r_cut, mode="none")
     sf = (1.0 - math.exp(-(HYDR_RC - HYDR_R0) * HYDR_A)) ** 2
     f1 = (HYDR_A, HYDR_R0, HYDR_RLOW, HYDR_RHIGH, HYDR_RCLOW, HYDR_RCHIGH, HYDR_BLOW, HYDR_BHIGH)
     for t1, t2 in itertools.combinations_with_replacement(types, 2):
-        eps = HYDR_EPS if dna1.is_complementary(t1, t2) else 0.0
         force.params[(t1, t2)] = dict(
-            eps=eps, shift_factor=sf, base_site=BASE_SITE, f1=f1,
+            eps=hb_epsilon(t1, t2, average), shift_factor=sf, base_site=BASE_SITE, f1=f1,
             f4_t1=HB_F4_THETA1, f4_t23=HB_F4_THETA23, f4_t4=HB_F4_THETA4, f4_t78=HB_F4_THETA78,
         )
     return force
@@ -217,18 +250,19 @@ def make_neighbor_list(buffer=0.4):
     return hoomd.md.nlist.Cell(buffer=buffer, exclusions=("bond",))
 
 
-def forces(nlist=None, temperature=296.15, salt=DEFAULT_SALT):
-    """oxRNA2 forces. PHASE A: the five reuse terms (FENE, bonded/nonbonded excluded
-    volume, hydrogen bonding, Debye-Huckel). The RNA-specific stacking, cross-stacking
-    and coaxial-stacking terms are added in later phases.
+def forces(nlist=None, temperature=296.15, salt=DEFAULT_SALT, average=True):
+    """Assemble the complete oxRNA2 force field (eight terms): bonded (FENE + bonded
+    excluded volume + stacking), nonbonded excluded volume, hydrogen bonding,
+    cross-stacking, coaxial stacking, Debye-Huckel. ``average=False`` uses the oxRNA2
+    sequence-dependent HB (incl. G-U) and stacking tables.
     """
     if nlist is None:
         nlist = make_neighbor_list()
     return (
         [
-            bonded_force(temperature=temperature),
+            bonded_force(temperature=temperature, average=average),
             excluded_volume(nlist),
-            hydrogen_bonding(nlist),
+            hydrogen_bonding(nlist, average=average),
             cross_stacking(nlist),
             coaxial_stacking(nlist),
             debye_huckel(nlist, t_kelvin=temperature, salt=salt),

@@ -31,6 +31,18 @@ STCK_BASE_EPS = 1.3523  # STCK_BASE_EPS_OXDNA2
 STCK_FACT_EPS = 2.6717  # STCK_FACT_EPS_OXDNA2
 HYDR_EPS = 1.0678       # HYDR_EPS_OXDNA2
 
+# --- sequence-dependent tables (seq_oxdna2.txt; DNAInteraction.cpp:345,368) ---
+# HB: per-pair epsilon directly. Stacking: STCK_<pair> * (1 - f + kT*9*f), f=0.18.
+STCK_FACT_EPS_SEQ = 0.18
+STCK_SEQ = {
+    ("G", "C"): 1.69339, ("C", "G"): 1.74669, ("G", "G"): 1.61295, ("C", "C"): 1.61295,
+    ("G", "A"): 1.59887, ("T", "C"): 1.59887, ("A", "G"): 1.61898, ("C", "T"): 1.61898,
+    ("T", "G"): 1.66322, ("C", "A"): 1.66322, ("G", "T"): 1.68032, ("A", "C"): 1.68032,
+    ("A", "T"): 1.56166, ("T", "A"): 1.64311, ("A", "A"): 1.84642, ("T", "T"): 1.58952,
+}
+HYDR_SEQ = {("A", "T"): 0.88537, ("T", "A"): 0.88537,
+            ("C", "G"): 1.23238, ("G", "C"): 1.23238}
+
 # --- coaxial (oxDNA2 form: harmonic theta1, no phi3, stiffer K) ---
 CXST_K = 58.5  # CXST_K_OXDNA2
 CXST_F4_THETA1 = (2.0, 10.9032, math.pi - 0.25, 0.65, 0.769231)  # T0 = PI - 0.25
@@ -50,14 +62,22 @@ def stacking_eps_table(t_kelvin=296.15):
     return [[eps] * 4 for _ in range(4)]
 
 
-def _stacking_params(t_kelvin):
+def sequence_stacking_eps_table(t_kelvin=296.15):
+    """oxDNA2 sequence-dependent stacking epsilon (DNAInteraction.cpp:345)."""
+    kT = dna1.kT_from_temperature(t_kelvin)
+    factor = 1.0 - STCK_FACT_EPS_SEQ + kT * 9.0 * STCK_FACT_EPS_SEQ
+    return [[STCK_SEQ[(DNA_BASES[i], DNA_BASES[j])] * factor for j in range(4)]
+            for i in range(4)]
+
+
+def _stacking_params(t_kelvin, average=True):
     sp = dna1.stacking_params(t_kelvin)  # f1/f4/f5 shapes are shared with oxDNA1
-    table = stacking_eps_table(t_kelvin)
+    table = stacking_eps_table(t_kelvin) if average else sequence_stacking_eps_table(t_kelvin)
     sp["stack_eps"] = tuple(table[i][j] for i in range(4) for j in range(4))
     return sp
 
 
-def bonded_force(bond_type="backbone", temperature=296.15, stacking=True):
+def bonded_force(bond_type="backbone", temperature=296.15, stacking=True, average=True):
     """oxDNA2 bonded force (grooved BACK, FENE r0, oxDNA2 stacking eps)."""
     force = OxDNABonded()
     params = dict(
@@ -72,7 +92,7 @@ def bonded_force(bond_type="backbone", temperature=296.15, stacking=True):
         bexc_back_base=dna1.EXCL[4],
     )
     if stacking:
-        params.update(_stacking_params(temperature))
+        params.update(_stacking_params(temperature, average=average))
     force.params[bond_type] = params
     return force
 
@@ -94,23 +114,29 @@ def excluded_volume(nlist, types=DNA_BASES, r_cut=dna1.EXCVOL_R_CUT):
     return force
 
 
-def hydrogen_bonding(nlist, types=DNA_BASES, r_cut=dna1.HB_R_CUT):
-    """oxDNA2 hydrogen bonding (sequence-averaged, HYDR_EPS_OXDNA2)."""
+def hb_epsilon(t1, t2, average=True):
+    """oxDNA2 HB epsilon for a type pair (0 unless Watson-Crick complementary)."""
+    if average:
+        return HYDR_EPS if dna1.is_complementary(t1, t2) else 0.0
+    return HYDR_SEQ.get((t1, t2), 0.0)
+
+
+def hydrogen_bonding(nlist, types=DNA_BASES, average=True, r_cut=dna1.HB_R_CUT):
+    """oxDNA2 hydrogen bonding (HYDR_EPS_OXDNA2 averaged, or per-pair when average=False)."""
     force = HydrogenBonding(nlist=nlist, default_r_cut=r_cut, mode="none")
     sf = dna1.hb_shift_factor()
     f1 = (dna1.HYDR_A, dna1.HYDR_R0, dna1.HYDR_RLOW, dna1.HYDR_RHIGH, dna1.HYDR_RCLOW,
           dna1.HYDR_RCHIGH, dna1.HYDR_BLOW, dna1.HYDR_BHIGH)
     for t1, t2 in itertools.combinations_with_replacement(types, 2):
-        eps = HYDR_EPS if dna1.is_complementary(t1, t2) else 0.0
         force.params[(t1, t2)] = dict(
-            eps=eps, shift_factor=sf, base_site=dna1.BASE_SITE, f1=f1,
+            eps=hb_epsilon(t1, t2, average), shift_factor=sf, base_site=dna1.BASE_SITE, f1=f1,
             f4_t1=dna1.HB_F4_THETA1, f4_t23=dna1.HB_F4_THETA23,
             f4_t4=dna1.HB_F4_THETA4, f4_t78=dna1.HB_F4_THETA78,
         )
     return force
 
 
-def hbond_cross(nlist, types=DNA_BASES, r_cut=None):
+def hbond_cross(nlist, types=DNA_BASES, average=True, r_cut=None):
     """Fused oxDNA2 hydrogen-bonding + (oxDNA1) cross-stacking; see forces.HBondCross."""
     if r_cut is None:
         r_cut = max(dna1.HB_R_CUT, dna1.CROSS_R_CUT)
@@ -119,7 +145,7 @@ def hbond_cross(nlist, types=DNA_BASES, r_cut=None):
     f1 = (dna1.HYDR_A, dna1.HYDR_R0, dna1.HYDR_RLOW, dna1.HYDR_RHIGH, dna1.HYDR_RCLOW,
           dna1.HYDR_RCHIGH, dna1.HYDR_BLOW, dna1.HYDR_BHIGH)
     for t1, t2 in itertools.combinations_with_replacement(types, 2):
-        eps = HYDR_EPS if dna1.is_complementary(t1, t2) else 0.0
+        eps = hb_epsilon(t1, t2, average)
         force.params[(t1, t2)] = dict(
             base_site=dna1.BASE_SITE, eps=eps, shift_factor=sf, f1=f1,
             hb_f4_t1=dna1.HB_F4_THETA1, hb_f4_t23=dna1.HB_F4_THETA23,
@@ -182,23 +208,24 @@ def make_neighbor_list(buffer=0.4):
     return hoomd.md.nlist.Cell(buffer=buffer, exclusions=("bond",))
 
 
-def forces(nlist=None, temperature=296.15, salt=DEFAULT_SALT, fused=False):
+def forces(nlist=None, temperature=296.15, salt=DEFAULT_SALT, fused=False, average=True):
     """Assemble the complete oxDNA2 force field (eight terms).
 
     Returns ``(force_list, nlist)`` with
     [bonded, excluded volume, hydrogen bonding, cross-stacking, coaxial stacking,
-    Debye-Huckel]. Sequence-averaged.
+    Debye-Huckel]. ``average=False`` uses the oxDNA2 sequence-dependent HB and stacking
+    tables.
 
     With ``fused=True`` hydrogen bonding and cross-stacking are merged into one
     HBondCross force (one GPU kernel sharing their geometry); the physics is identical.
     """
     if nlist is None:
         nlist = make_neighbor_list()
-    base_base = ([hbond_cross(nlist)] if fused
-                 else [hydrogen_bonding(nlist), dna1.cross_stacking(nlist)])
+    base_base = ([hbond_cross(nlist, average=average)] if fused
+                 else [hydrogen_bonding(nlist, average=average), dna1.cross_stacking(nlist)])
     return (
         [
-            bonded_force(temperature=temperature),
+            bonded_force(temperature=temperature, average=average),
             excluded_volume(nlist),
             *base_base,
             coaxial_stacking(nlist),

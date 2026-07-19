@@ -110,6 +110,21 @@ def test_rna2_bonded_force_fd():
     H.fd_check(build, H.load_frame(CASE, frame=0, top_name="sys.top", conf_name="init.conf"))
 
 
+def test_rna2_sequence_dependent():
+    # per-pair HB (incl. G-U wobble) + stacking tables (seq_rna.txt), mixed sequence
+    case = "simple-helix-rna2-12bp-ss"
+    snap = H.snapshot(case, top_name="sys.top", conf_name="init.conf")
+    n = snap.particles.N
+    nl = rna2.make_neighbor_list()
+    bonded = rna2.bonded_force(average=False)
+    hb = rna2.hydrogen_bonding(nl, average=False)
+    got = H.single_point(snap, [bonded, hb],
+                         lambda fs: (fs[0].stacking_energy / n, fs[1].energy / n))
+    ref = H.split_energy(case, frame=0)
+    assert abs(got[0] - ref[3]) < 1e-4, f"stack: {got[0]:.6f} vs {ref[3]:.6f}"  # stack col
+    assert abs(got[1] - ref[COL['hb']]) < 1e-4, f"hb: {got[1]:.6f} vs {ref[COL['hb']]:.6f}"
+
+
 def _frame():
     return H.load_frame(CASE, frame=0, top_name=TOP, conf_name=CONF)
 

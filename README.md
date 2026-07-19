@@ -149,11 +149,15 @@ on the GPU.
 
 - oxDNA1 (7 terms) and oxDNA2 (8 terms, grooved geometry + Debye-Hückel): complete
   and validated (sequence-averaged and sequence-dependent), on CPU and GPU.
-- oxRNA2 (`model/rna2.py`, 8 terms): complete and validated (sequence-averaged), on
-  CPU and GPU. Five terms reuse the oxDNA evaluators with RNA geometry/constants; the
+- oxRNA2 (`model/rna2.py`, 8 terms): complete and validated (sequence-averaged and
+  sequence-dependent, incl. G-U wobble), on CPU and GPU. Five terms reuse the oxDNA
+  evaluators with RNA geometry/constants; the
   RNA-specific variants — cross-stacking (θ4 dropped), coaxial stacking (two
   independent dihedrals from the real backbone vector), and stacking (asymmetric
   STACK_3/STACK_5 sites + two backbone angles) — are new evaluator/kernel paths that
   leave the oxDNA paths byte-identical. See `pytest/test_rna2.py`.
 - `bench/benchmark.py` times CPU vs GPU on a tiled system.
-- Not yet implemented: sequence-dependent oxRNA2 tables, exact (COM) virial, oxRNA1.
+- Sequence-dependent parametrisation (per-pair HB + stacking tables) is wired for
+  both oxDNA2 and oxRNA2 (`forces(average=False)`); it needs no engine changes since
+  the C++ already carries per-type-pair HB eps and the 4×4 `st_eps` stacking table.
+- Not yet implemented: exact (COM) virial, oxRNA1.

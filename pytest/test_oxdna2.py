@@ -14,10 +14,10 @@ import _helpers as H
 TERMS = ["fene", "b_exc", "stack", "n_exc", "hb", "cr_stack", "cx_stack", "debye"]
 
 
-def _all_terms(case, half_charged):
+def _all_terms(case, half_charged, average=True):
     snap = H.snapshot(case, half_charged_ends=half_charged)
     n = snap.particles.N
-    forces = dna2.forces()[0]
+    forces = dna2.forces(average=average)[0]
 
     def read(fs):
         bonded, excvol, hb, crst, coax, debye = fs
@@ -35,12 +35,18 @@ def _all_terms(case, half_charged):
     return H.single_point(snap, forces, read), H.split_energy(case)
 
 
-def _check(case, half_charged, terms=TERMS):
-    vals, ref = _all_terms(case, half_charged)
+def _check(case, half_charged, terms=TERMS, average=True):
+    vals, ref = _all_terms(case, half_charged, average=average)
     for name in terms:
         assert abs(vals[name] - ref[H.COL[name]]) < 1e-4, (
             f"{case} {name}: {vals[name]:.6f} vs {ref[H.COL[name]]:.6f}"
         )
+
+
+def test_oxdna2_sequence_dependent():
+    # per-pair HB + stacking tables (seq_oxdna2.txt) on a mixed-sequence helix
+    _check("simple-helix-oxdna2-ss", half_charged=False, average=False,
+           terms=["fene", "stack", "hb", "cr_stack", "debye"])
 
 
 def test_oxdna2_all_terms_simple_helix():
