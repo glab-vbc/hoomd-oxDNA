@@ -1,0 +1,25 @@
+# CMake build tree(s)
+build/
+build_*/
+
+# Compiled objects and the built engine extension (produced from src/ by cmake)
+*.o
+*.so
+oxdna/_engine*.so
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Profiling / benchmark artifacts
+*.nsys-rep
+*.ncu-rep
+*.sqlite
+
+# Editor / OS
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
