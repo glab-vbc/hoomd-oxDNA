@@ -15,8 +15,9 @@ from oxdna.model import rna2
 import _helpers as H
 
 CASE = "simple-helix-rna2-12bp"
+COAX_CASE = "simple-coax-rna2"  # exercises coaxial stacking (cx_stack != 0)
 TOP, CONF = "sys.top", "output.dat"
-COL = dict(fene=1, b_exc=2, n_exc=4, hb=5, cr_stack=6, debye=8)
+COL = dict(fene=1, b_exc=2, n_exc=4, hb=5, cr_stack=6, cx_stack=7, debye=8)
 
 
 def _energies(snap):
@@ -69,6 +70,25 @@ def test_rna2_debye_half_charged_ends():
     e = H.single_point(snap, [dh], lambda fs: fs[0].energy) / n
     ref = H.split_energy(case, frame=0)[COL["debye"]]
     assert abs(e - ref) < 1e-4, f"debye(half-charged): {e:.6f} vs ref {ref:.6f}"
+
+
+def test_rna2_coaxial_stacking():
+    # simple-coax-rna2 uses the DNA-style generated.top / start.conf (the defaults)
+    snap = H.snapshot(COAX_CASE)
+    n = snap.particles.N
+    nl = rna2.make_neighbor_list()
+    coax = rna2.coaxial_stacking(nl)
+    e = H.single_point(snap, [coax], lambda fs: fs[0].energy) / n
+    ref = H.split_energy(COAX_CASE, frame=0)[COL["cx_stack"]]
+    assert abs(e - ref) < 1e-4, f"cx_stack: {e:.6f} vs ref {ref:.6f}"
+
+
+def test_rna2_coaxial_stacking_fd():
+    def build():
+        nl = rna2.make_neighbor_list()
+        return [rna2.coaxial_stacking(nl)]
+
+    H.fd_check(build, H.load_frame(COAX_CASE, frame=0))
 
 
 def _frame():

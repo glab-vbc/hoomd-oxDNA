@@ -17,7 +17,8 @@ import math
 import hoomd
 
 from ..forces import (
-    OxDNABonded, ExcludedVolume, HydrogenBonding, CrossStacking, DebyeHuckel)
+    OxDNABonded, ExcludedVolume, HydrogenBonding, CrossStacking, CoaxialStacking,
+    DebyeHuckel)
 from ..io import DNA_BASES
 from . import dna1
 
@@ -67,6 +68,41 @@ def cross_stacking(nlist, types=DNA_BASES, r_cut=CROSS_R_CUT):
     pair = dict(
         base_site=BASE_SITE, f2=CRST_F2, f4_t1=CRST_F4_THETA1, f4_t23=CRST_F4_THETA23,
         f4_t4=CRST_F4_THETA4, f4_t78=CRST_F4_THETA78, t4_enabled=False,
+    )
+    for t1, t2 in itertools.combinations_with_replacement(types, 2):
+        force.params[(t1, t2)] = dict(pair)
+    return force
+
+
+# --- coaxial stacking (rna_model.h; two independent dihedrals f5(phi3)*f5(phi4)) ---
+# f2: (K, r0, rc, rlow, rhigh, rclow, rchigh, blow, bhigh)
+CXST_F2 = (80.0, 0.5, 0.6, 0.42, 0.58, 0.375, 0.625, -0.888889, -0.888889)
+CXST_F4_THETA1 = (2.0, 10.9032, 2.592, 0.65, 0.769231)   # reflection f4(t)+f4(2pi-t)
+CXST_F4_THETA4 = (1.3, 6.4381, 0.151, 0.8, 0.961538)
+CXST_F4_THETA56 = (0.9, 3.89361, 0.685, 0.95, 1.16959)   # theta5 == theta6
+CXST_F5_PHI3 = (2.0, 10.9032, -0.769231, -0.65)
+CXST_F5_PHI4 = (2.0, 10.9032, -0.769231, -0.65)          # phi4 same shape as phi3
+CXST_RCHIGH = 0.625
+COAX_R_CUT = CXST_RCHIGH + 2.0 * POS_STACK  # ~1.305
+
+
+def coaxial_stacking(nlist, types=DNA_BASES, r_cut=COAX_R_CUT):
+    """oxRNA2 coaxial stacking (STACK-STACK; two dihedrals from the real BACK vector)."""
+    force = CoaxialStacking(nlist=nlist, default_r_cut=r_cut, mode="none")
+    pair = dict(
+        stack_site=STACK_SITE,
+        stack_back_ref=BACK_SITE,  # RNA uses the real BACK-BACK vector for the dihedrals
+        gamma=0.0,                 # unused when rna_coax
+        f2=CXST_F2,
+        f4_t1=CXST_F4_THETA1,
+        f4_t4=CXST_F4_THETA4,
+        f4_t56=CXST_F4_THETA56,
+        f5_phi3=CXST_F5_PHI3,
+        f5_phi4=CXST_F5_PHI4,
+        t1_mode=0,        # reflection f4(t1)+f4(2pi-t1)
+        t1_sa=0.0, t1_sb=0.0,
+        phi3_enabled=False,
+        rna_coax=True,
     )
     for t1, t2 in itertools.combinations_with_replacement(types, 2):
         force.params[(t1, t2)] = dict(pair)
@@ -164,6 +200,7 @@ def forces(nlist=None, temperature=296.15, salt=DEFAULT_SALT):
             excluded_volume(nlist),
             hydrogen_bonding(nlist),
             cross_stacking(nlist),
+            coaxial_stacking(nlist),
             debye_huckel(nlist, t_kelvin=temperature, salt=salt),
         ],
         nlist,

@@ -36,10 +36,15 @@ struct OxDNACoaxStackingParams
     Scalar gamma;
     Scalar f2_k, f2_r0, f2_rc, f2_rlow, f2_rhigh, f2_rclow, f2_rchigh, f2_blow, f2_bhigh;
     Scalar t1[5], t4[5], t56[5]; // theta1 (modified), theta4, theta5==theta6
-    Scalar phi3[4];              // f5 phi3 (a, b, xc, xs); phi4 == phi3
+    Scalar phi3[4];              // f5 phi3 (a, b, xc, xs)
+    Scalar phi4[4];              // f5 phi4 (oxRNA second dihedral); unused unless rna_coax
     int t1_mode;                 // 0 = oxDNA1 reflection; 1 = oxDNA2 harmonic
     Scalar t1_sa, t1_sb;         // oxDNA2 theta1 harmonic SA*(t-SB)^2
     bool phi3_enabled;           // oxDNA1 multiplies by f5(phi3)^2
+    // oxRNA coaxial: use two independent dihedrals f5(phi3)*f5(phi4) built from the
+    // real BACK-BACK vector (stack_back_ref set to the RNA BACK site), phi3 from a1
+    // and phi4 from b1, with the compact cross-product force. Overrides phi3_enabled.
+    bool rna_coax;
 
 #ifdef ENABLE_HIP
     void set_memory_hint() const { }
@@ -51,12 +56,12 @@ struct OxDNACoaxStackingParams
         : stack_site(0, 0, 0), stack_back_ref(0, 0, 0), gamma(0),
           f2_k(0), f2_r0(0), f2_rc(0), f2_rlow(0), f2_rhigh(0), f2_rclow(0),
           f2_rchigh(0), f2_blow(0), f2_bhigh(0), t1_mode(0), t1_sa(0), t1_sb(0),
-          phi3_enabled(true)
+          phi3_enabled(true), rna_coax(false)
         {
         for (int k = 0; k < 5; k++)
             t1[k] = t4[k] = t56[k] = 0;
         for (int k = 0; k < 4; k++)
-            phi3[k] = 0;
+            phi3[k] = phi4[k] = 0;
         }
 
 #ifndef __HIPCC__
@@ -83,6 +88,12 @@ struct OxDNACoaxStackingParams
         t1_sa = v["t1_sa"].cast<Scalar>();
         t1_sb = v["t1_sb"].cast<Scalar>();
         phi3_enabled = v["phi3_enabled"].cast<bool>();
+        rna_coax = v.contains("rna_coax") ? v["rna_coax"].cast<bool>() : false;
+        if (v.contains("f5_phi4"))
+            oxdna_io::read_scalars<4>(v["f5_phi4"], phi4);
+        else
+            for (int k = 0; k < 4; k++)
+                phi4[k] = phi3[k];
         }
 
     pybind11::object toPython()
@@ -97,10 +108,12 @@ struct OxDNACoaxStackingParams
         v["f4_t4"] = oxdna_io::pack_scalars<5>(t4);
         v["f4_t56"] = oxdna_io::pack_scalars<5>(t56);
         v["f5_phi3"] = oxdna_io::pack_scalars<4>(phi3);
+        v["f5_phi4"] = oxdna_io::pack_scalars<4>(phi4);
         v["t1_mode"] = t1_mode;
         v["t1_sa"] = t1_sa;
         v["t1_sb"] = t1_sb;
         v["phi3_enabled"] = phi3_enabled;
+        v["rna_coax"] = rna_coax;
         return std::move(v);
         }
 #endif
@@ -190,8 +203,17 @@ class EvaluatorPairOxDNACoaxStacking
         ForceReal f4t6 = oxdna::f4_val_angle<ForceReal>(ang6, p.t56[0], p.t56[1], p.t56[2], p.t56[3], p.t56[4])
                          + oxdna::f4_val_angle<ForceReal>(ang6n, p.t56[0], p.t56[1], p.t56[2], p.t56[3], p.t56[4]);
 
-        ForceReal f5cosphi3 = ForceReal(0.0), phi_factor = ForceReal(1.0);
-        if (p.phi3_enabled)
+        ForceReal f5cosphi3 = ForceReal(0.0), f5cosphi4 = ForceReal(0.0);
+        ForceReal cosphi4 = ForceReal(0.0), phi_factor = ForceReal(1.0);
+        if (p.rna_coax)
+            {
+            // oxRNA: second dihedral from b1, energy uses f5(phi3)*f5(phi4)
+            cosphi4 = dot(rstackdir, cross(rbackbonerefdir, b1));
+            f5cosphi3 = oxdna::f5_val<ForceReal>(cosphi3, p.phi3[0], p.phi3[1], p.phi3[2], p.phi3[3]);
+            f5cosphi4 = oxdna::f5_val<ForceReal>(cosphi4, p.phi4[0], p.phi4[1], p.phi4[2], p.phi4[3]);
+            phi_factor = f5cosphi3 * f5cosphi4;
+            }
+        else if (p.phi3_enabled)
             {
             f5cosphi3 = oxdna::f5_val<ForceReal>(cosphi3, p.phi3[0], p.phi3[1], p.phi3[2], p.phi3[3]);
             phi_factor = f5cosphi3 * f5cosphi3;
@@ -252,6 +274,47 @@ class EvaluatorPairOxDNACoaxStacking
         force += (b3 + rstackdir * cost6) * (fact / rstackmod);
         dir = cross(rstackdir, b3);
         torqueq += -dir * fact;
+
+        // --- oxRNA coaxial: two independent dihedrals f5(phi3)*f5(phi4), built from the
+        // real BACK-BACK vector, with the compact cross-product force (RNAInteraction.cpp
+        // _coaxial_stacking). phi3 uses a1 (pure torque on p), phi4 uses b1 (on q); both
+        // act at the STACK and BACK sites. Returns early: the oxDNA path below is untouched.
+        if (p.rna_coax)
+            {
+            // STACK site-offset torque for the radial + theta force accumulated so far
+            torquep -= cross(stack_i, force);
+            torqueq += cross(stack_j, force);
+
+            ForceReal base = f2 * f4t1 * f4t4 * f4t5 * f4t6;
+            ForceReal f5Dcosphi3 = oxdna::f5_deriv<ForceReal>(cosphi3, p.phi3[0], p.phi3[1],
+                                                              p.phi3[2], p.phi3[3]);
+            ForceReal f5Dcosphi4 = oxdna::f5_deriv<ForceReal>(cosphi4, p.phi4[0], p.phi4[1],
+                                                              p.phi4[2], p.phi4[3]);
+            for (int which = 0; which < 2; which++)
+                {
+                vec3<ForceReal> v = (which == 0) ? a1 : b1;
+                ForceReal force_c = (which == 0) ? base * f5cosphi4 * f5Dcosphi3
+                                                 : base * f5cosphi3 * f5Dcosphi4;
+                vec3<ForceReal> rbv = cross(rbackbonerefdir, v);
+                vec3<ForceReal> vrs = cross(v, rstackdir);
+                vec3<ForceReal> fstack = -(rbv - rstackdir * dot(rstackdir, rbv)) * (force_c / rstackmod);
+                vec3<ForceReal> fback = -(vrs - rbackbonerefdir * dot(rbackbonerefdir, vrs))
+                                        * (force_c / rbackrefmod);
+                force += fstack + fback;
+                torquep -= cross(stack_i, fstack) + cross(backref_i, fback);
+                torqueq += cross(stack_j, fstack) + cross(backref_j, fback);
+                vec3<ForceReal> pure = force_c * cross(v, cross(rstackdir, rbackbonerefdir));
+                if (which == 0)
+                    torquep -= pure;
+                else
+                    torqueq -= pure;
+                }
+
+            force_out = vec_to_scalar3(-force);
+            torque_i = vec_to_scalar3(torquep);
+            torque_j = vec_to_scalar3(torqueq);
+            return true;
+            }
 
         // COS PHI3 dihedral (oxDNA1 only)
         if (p.phi3_enabled)

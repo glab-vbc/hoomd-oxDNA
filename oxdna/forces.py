@@ -258,11 +258,14 @@ class CoaxialStacking(AnisotropicPair):
                 f4_t4=(float,) * 5,
                 f4_t56=(float,) * 5,
                 f5_phi3=(float,) * 4,
+                f5_phi4=(float,) * 4,  # oxRNA second dihedral (defaults to phi3)
                 t1_mode=int,
                 t1_sa=float,
                 t1_sb=float,
                 phi3_enabled=bool,
+                rna_coax=bool,  # oxRNA two-dihedral f5(phi3)*f5(phi4) form
                 len_keys=2,
+                _defaults={"f5_phi4": (0.0,) * 4, "rna_coax": False},
             ),
         )
         self._add_typeparam(params)
