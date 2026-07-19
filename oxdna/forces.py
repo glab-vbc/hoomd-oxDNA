@@ -53,6 +53,14 @@ class OxDNABonded(Force):
                 stack_f4_t4=(float,) * 5,
                 stack_f4_t5=(float,) * 5,
                 stack_f5_p1=(float,) * 4,
+                # oxRNA stacking (asymmetric sites + backbone angles); off by default
+                stack_rna=bool,
+                stack_3_site=(float, float, float),
+                stack_5_site=(float, float, float),
+                stack_bbvector_3=(float, float, float),
+                stack_bbvector_5=(float, float, float),
+                stack_f4_tB1=(float,) * 5,
+                stack_f4_tB2=(float,) * 5,
                 len_keys=1,
                 _defaults={
                     "stack_enabled": False,
@@ -64,6 +72,13 @@ class OxDNABonded(Force):
                     "stack_f4_t4": (0.0,) * 5,
                     "stack_f4_t5": (0.0,) * 5,
                     "stack_f5_p1": (0.0,) * 4,
+                    "stack_rna": False,
+                    "stack_3_site": (0.0, 0.0, 0.0),
+                    "stack_5_site": (0.0, 0.0, 0.0),
+                    "stack_bbvector_3": (0.0, 0.0, 0.0),
+                    "stack_bbvector_5": (0.0, 0.0, 0.0),
+                    "stack_f4_tB1": (0.0,) * 5,
+                    "stack_f4_tB2": (0.0,) * 5,
                 },
             ),
         )

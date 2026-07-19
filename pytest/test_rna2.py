@@ -91,6 +91,25 @@ def test_rna2_coaxial_stacking_fd():
     H.fd_check(build, H.load_frame(COAX_CASE, frame=0))
 
 
+def test_rna2_stacking():
+    snap = H.snapshot(CASE, top_name="sys.top", conf_name="init.conf")
+    n = snap.particles.N
+    bonded = rna2.bonded_force()
+    e = H.single_point(snap, [bonded], lambda fs: fs[0].stacking_energy) / n
+    ref = H.split_energy(CASE, frame=0)[3]  # stack column (init.conf == row 0)
+    assert abs(e - ref) < 1e-4, f"stack: {e:.6f} vs ref {ref:.6f}"
+
+
+def test_rna2_bonded_force_fd():
+    # FD-check the full bonded force (FENE + bonded excl vol + RNA stacking) together;
+    # FENE/bexc are shared with the validated DNA path, so this exercises the new
+    # stacking force/torque.
+    def build():
+        return [rna2.bonded_force()]
+
+    H.fd_check(build, H.load_frame(CASE, frame=0, top_name="sys.top", conf_name="init.conf"))
+
+
 def _frame():
     return H.load_frame(CASE, frame=0, top_name=TOP, conf_name=CONF)
 

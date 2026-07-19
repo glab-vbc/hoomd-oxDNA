@@ -115,20 +115,50 @@ DH_PREFACTOR = 0.0858         # dh_strength
 DEFAULT_SALT = 1.0
 
 
-def bonded_force(bond_type="backbone", temperature=296.15):
-    """oxRNA2 bonded force: FENE + bonded excluded volume.
+# --- stacking (rna_model.h; asymmetric STACK_3/STACK_5 + backbone angles thetaB1/B2) ---
+STACK_3_SITE = (0.4, 0.1, 0.0)                          # p (=B) radial site
+STACK_5_SITE = (0.124906078525, -0.00866274917473, 0.0)  # q (=A) radial site
+BBVECTOR_3 = (-0.462510, -0.528218, 0.712089)          # body-frame direction pseudo-sites
+BBVECTOR_5 = (-0.104402, -0.841783, 0.529624)
+STCK_BASE_EPS = 1.40206
+STCK_FACT_EPS = 2.77
+STCK_A, STCK_RC, STCK_R0 = 6.0, 0.93, 0.43
+STCK_RLOW, STCK_RHIGH, STCK_RCLOW, STCK_RCHIGH = 0.35, 0.78, 0.26239, 0.986
+STCK_BLOW, STCK_BHIGH = -68.1857, -3.12992
+STCK_F4_THETA5 = (0.9, 3.89361, 0.0, 0.95, 1.16959)    # theta5 == theta6
+STCK_F4_THETAB1 = (1.3, 6.4381, 0.0, 0.8, 0.961538)
+STCK_F4_THETAB2 = (1.3, 6.4381, 0.0, 0.8, 0.961538)    # same shape as thetaB1
+STCK_F5_PHI1 = (2.0, 10.9032, -0.769231, -0.65)        # phi1 == phi2
 
-    Stacking is a functionally different RNA term (asymmetric sites + backbone
-    angles) added separately, so it is left disabled here (stack_enabled defaults
-    False in the C++ params).
-    """
+
+def stacking_params(t_kelvin=296.15):
+    """oxRNA2 bonded-stacking sub-dict (sequence-averaged)."""
+    kT = dna1.kT_from_temperature(t_kelvin)
+    eps = STCK_BASE_EPS + STCK_FACT_EPS * kT
+    shift = (1.0 - math.exp(-(STCK_RC - STCK_R0) * STCK_A)) ** 2
+    f1 = (STCK_A, STCK_R0, STCK_RLOW, STCK_RHIGH, STCK_RCLOW, STCK_RCHIGH,
+          STCK_BLOW, STCK_BHIGH, shift)
+    return dict(
+        stack_enabled=True, stack_rna=True,
+        stack_f1=f1, stack_eps=(eps,) * 16,
+        stack_f4_t5=STCK_F4_THETA5, stack_f5_p1=STCK_F5_PHI1,
+        stack_3_site=STACK_3_SITE, stack_5_site=STACK_5_SITE,
+        stack_bbvector_3=BBVECTOR_3, stack_bbvector_5=BBVECTOR_5,
+        stack_f4_tB1=STCK_F4_THETAB1, stack_f4_tB2=STCK_F4_THETAB2,
+    )
+
+
+def bonded_force(bond_type="backbone", temperature=296.15):
+    """oxRNA2 bonded force: FENE + bonded excluded volume + (RNA) stacking."""
     force = OxDNABonded()
-    force.params[bond_type] = dict(
+    params = dict(
         epsilon=FENE_EPS, r0=FENE_R0, delta=FENE_DELTA,
         pos_back=BACK_SITE, pos_base=BASE_SITE,
         excl_eps=EXCL_EPS,
         bexc_base_base=EXCL[2], bexc_base_back=EXCL[3], bexc_back_base=EXCL[4],
     )
+    params.update(stacking_params(temperature))
+    force.params[bond_type] = params
     return force
 
 

@@ -230,6 +230,128 @@ OXDNA_BK_HOSTDEVICE inline Real bonded_stacking(const oxdna_bonded_params& p,
     return e_stack;
     }
 
+//! oxRNA stacking (RNAInteraction::_stacking). Differs from oxDNA: asymmetric radial
+//! sites (p=B uses STACK_3, q=A uses STACK_5), NO theta4, two backbone angles
+//! f4(thetaB1)*f4(thetaB2) from the BBVECTOR direction pseudo-sites and the real
+//! BACK-BACK vector, and phi1/phi2 also from the real BACK-BACK vector. Accumulates
+//! into FB (force on B) / tauA / tauB / vir and returns the stacking energy.
+template<class Real>
+OXDNA_BK_HOSTDEVICE inline Real bonded_stacking_rna(const oxdna_bonded_params& p,
+                                                    const vec3<Real>& Rc,
+                                                    const quat<Real>& qA,
+                                                    const quat<Real>& qB,
+                                                    unsigned int typeA,
+                                                    unsigned int typeB,
+                                                    vec3<Scalar>& FB,
+                                                    vec3<Scalar>& tauA,
+                                                    vec3<Scalar>& tauB,
+                                                    Scalar vir[6])
+    {
+    // a* = p's (=B) axes, b* = q's (=A) axes (only a2/a3, b2/b3 are used).
+    vec3<Real> a2 = rotate(qB, vec3<Real>(0, 1, 0));
+    vec3<Real> a3 = rotate(qB, vec3<Real>(0, 0, 1));
+    vec3<Real> b2 = rotate(qA, vec3<Real>(0, 1, 0));
+    vec3<Real> b3 = rotate(qA, vec3<Real>(0, 0, 1));
+
+    vec3<Real> stack3(p.stack_3_site), stack5(p.stack_5_site);
+    vec3<Real> bbv3(p.bbvector_3), bbv5(p.bbvector_5), backv(p.back_site);
+    vec3<Real> stackP = rotate(qB, stack3); // p=B -> STACK_3
+    vec3<Real> stackQ = rotate(qA, stack5); // q=A -> STACK_5
+    vec3<Real> backP = rotate(qB, backv);
+    vec3<Real> backQ = rotate(qA, backv);
+    vec3<Real> bbvecP = rotate(qB, bbv3);   // p=B -> BBVECTOR_3
+    vec3<Real> bbvecQ = rotate(qA, bbv5);   // q=A -> BBVECTOR_5
+
+    vec3<Real> Rpq(-Rc.x, -Rc.y, -Rc.z); // q.pos - p.pos = posA - posB
+
+    vec3<Real> rstack = Rpq + stackQ - stackP;
+    Real rstackmod = sqrt(dot(rstack, rstack));
+    vec3<Real> rstackdir = rstack / rstackmod;
+
+    vec3<Real> rback = Rpq + backQ - backP;
+    Real rbackmod = sqrt(dot(rback, rback));
+    vec3<Real> rbackdir = rback / rbackmod;
+
+    Real cost5 = dot(a3, rstackdir);
+    Real cost6 = -dot(b3, rstackdir);
+    Real costB1 = -dot(rbackdir, bbvecP);
+    Real costB2 = -dot(rbackdir, bbvecQ);
+    Real cosphi1 = dot(a2, rback) / rbackmod;
+    Real cosphi2 = dot(b2, rback) / rbackmod;
+
+    Real eps = p.st_eps[typeA][typeB];
+    Real shift = eps * Real(p.st_shift_factor);
+
+    Real ang5 = acos(clamp_cos<Real>(-cost5)); // f4(PI - t5) = f4(acos(-cost5))
+    Real ang6 = acos(clamp_cos<Real>(cost6));
+    Real angB1 = acos(clamp_cos<Real>(costB1));
+    Real angB2 = acos(clamp_cos<Real>(costB2));
+
+    Real f1 = f1_val<Real>(rstackmod, p.st_a, p.st_r0, p.st_rlow, p.st_rhigh,
+                           p.st_rclow, p.st_rchigh, p.st_blow, p.st_bhigh, eps, shift);
+    Real f4t5 = f4_val_angle<Real>(ang5, p.t5_a, p.t5_b, p.t5_t0, p.t5_ts, p.t5_tc);
+    Real f4t6 = f4_val_angle<Real>(ang6, p.t5_a, p.t5_b, p.t5_t0, p.t5_ts, p.t5_tc);
+    Real f4tB1 = f4_val_angle<Real>(angB1, p.tB1_a, p.tB1_b, p.tB1_t0, p.tB1_ts, p.tB1_tc);
+    Real f4tB2 = f4_val_angle<Real>(angB2, p.tB2_a, p.tB2_b, p.tB2_t0, p.tB2_ts, p.tB2_tc);
+    Real f5phi1 = f5_val<Real>(cosphi1, p.p1_a, p.p1_b, p.p1_xc, p.p1_xs);
+    Real f5phi2 = f5_val<Real>(cosphi2, p.p1_a, p.p1_b, p.p1_xc, p.p1_xs);
+
+    Real e_stack = f1 * f4t5 * f4t6 * f4tB1 * f4tB2 * f5phi1 * f5phi2;
+    if (e_stack == Real(0.0))
+        return e_stack;
+
+    Real f1D = f1_deriv<Real>(rstackmod, p.st_a, p.st_r0, p.st_rlow, p.st_rhigh,
+                              p.st_rclow, p.st_rchigh, p.st_blow, p.st_bhigh, eps);
+    Real f4t5Dsin = f4_Dsin_angle<Real>(ang5, p.t5_a, p.t5_b, p.t5_t0, p.t5_ts, p.t5_tc);
+    Real f4t6Dsin = f4_Dsin_angle<Real>(ang6, p.t5_a, p.t5_b, p.t5_t0, p.t5_ts, p.t5_tc);
+    Real f4tB1Dsin = f4_Dsin_angle<Real>(angB1, p.tB1_a, p.tB1_b, p.tB1_t0, p.tB1_ts, p.tB1_tc);
+    Real f4tB2Dsin = f4_Dsin_angle<Real>(angB2, p.tB2_a, p.tB2_b, p.tB2_t0, p.tB2_ts, p.tB2_tc);
+    Real f5phi1D = f5_deriv<Real>(cosphi1, p.p1_a, p.p1_b, p.p1_xc, p.p1_xs);
+    Real f5phi2D = f5_deriv<Real>(cosphi2, p.p1_a, p.p1_b, p.p1_xc, p.p1_xs);
+
+    // force on q (=A) acting along the stack vector (radial + theta5 + theta6)
+    vec3<Real> force = -rstackdir * (f1D * f4t5 * f4t6 * f4tB1 * f4tB2 * f5phi1 * f5phi2);
+    force += -(a3 - rstackdir * cost5)
+             * (f1 * f4t5Dsin * f4t6 * f4tB1 * f4tB2 * f5phi1 * f5phi2 / rstackmod);
+    force += -(b3 + rstackdir * cost6)
+             * (f1 * f4t5 * f4t6Dsin * f4tB1 * f4tB2 * f5phi1 * f5phi2 / rstackmod);
+
+    // force on q (=A) acting along the backbone vector (thetaB1/thetaB2 + phi1/phi2).
+    // NB: force_part_phi2 keeps f4tB1*f4tB2 for energy consistency (the oxDNA source
+    // drops it, giving forces slightly inconsistent with its own energy).
+    vec3<Real> posback(0, 0, 0);
+    posback += -(bbvecP + rbackdir * costB1)
+               * (f1 * f4t5 * f4t6 * f4tB1Dsin * f4tB2 * f5phi1 * f5phi2 / rbackmod);
+    posback += -(bbvecQ + rbackdir * costB2)
+               * (f1 * f4t5 * f4t6 * f4tB1 * f4tB2Dsin * f5phi1 * f5phi2 / rbackmod);
+    Real force_part_phi1 = -f1 * f4t5 * f4t6 * f4tB1 * f4tB2 * f5phi1D * f5phi2;
+    posback += (a2 - rback * (cosphi1 / rbackmod)) * (force_part_phi1 / rbackmod);
+    Real force_part_phi2 = -f1 * f4t5 * f4t6 * f4tB1 * f4tB2 * f5phi1 * f5phi2D;
+    posback += (b2 - rback * (cosphi2 / rbackmod)) * (force_part_phi2 / rbackmod);
+
+    FB += vec3<Scalar>(-(force + posback)); // force on p (=B)
+    bonded_accumulate_virial(vir, vec3<Scalar>(rstack), vec3<Scalar>(force));
+    bonded_accumulate_virial(vir, vec3<Scalar>(rback), vec3<Scalar>(posback));
+
+    // torques (lab frame). tp = on p (=B), tq = on q (=A).
+    vec3<Real> tp(0, 0, 0), tq(0, 0, 0);
+    tp -= cross(stackP, force);
+    tq += cross(stackQ, force);
+    tp -= cross(backP, posback);
+    tq += cross(backQ, posback);
+
+    tp -= cross(rstackdir, a3) * (-f1 * f4t5Dsin * f4t6 * f4tB1 * f4tB2 * f5phi1 * f5phi2);
+    tq += cross(rstackdir, b3) * (f1 * f4t5 * f4t6Dsin * f4tB1 * f4tB2 * f5phi1 * f5phi2);
+    tp += cross(rbackdir, bbvecP) * (f1 * f4t5 * f4t6 * f4tB1Dsin * f4tB2 * f5phi1 * f5phi2);
+    tq += cross(rbackdir, bbvecQ) * (f1 * f4t5 * f4t6 * f4tB1 * f4tB2Dsin * f5phi1 * f5phi2);
+    tp += cross(a2, rbackdir) * force_part_phi1;
+    tq += cross(b2, rbackdir) * force_part_phi2;
+
+    tauB += vec3<Scalar>(tp); // p = B
+    tauA += vec3<Scalar>(tq); // q = A
+    return e_stack;
+    }
+
 //! Full bonded-pair evaluation: FENE + bonded excluded volume + stacking.
 //! \a Rc is the min-image COM-COM vector r_B - r_A.
 OXDNA_BK_HOSTDEVICE inline void oxdna_bonded_pair(const oxdna_bonded_params& p,
@@ -296,10 +418,16 @@ OXDNA_BK_HOSTDEVICE inline void oxdna_bonded_pair(const oxdna_bonded_params& p,
         bonded_accumulate_virial(out.vir, vec3<Scalar>(rcenter), vec3<Scalar>(f));
         }
 
-    // --- Stacking ---
+    // --- Stacking (oxDNA or oxRNA form) ---
     if (p.stacking_enabled)
-        out.e_stack = bonded_stacking<ForceReal>(p, Rcf, qAf, qBf, typeA, typeB,
-                                                 out.FB, out.tauA, out.tauB, out.vir);
+        {
+        if (p.rna_stacking)
+            out.e_stack = bonded_stacking_rna<ForceReal>(p, Rcf, qAf, qBf, typeA, typeB,
+                                                         out.FB, out.tauA, out.tauB, out.vir);
+        else
+            out.e_stack = bonded_stacking<ForceReal>(p, Rcf, qAf, qBf, typeA, typeB,
+                                                     out.FB, out.tauA, out.tauB, out.vir);
+        }
     }
 
     } // end namespace oxdna

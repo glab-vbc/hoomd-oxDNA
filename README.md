@@ -1,7 +1,7 @@
 # hoomd-oxDNA
 
-The oxDNA coarse-grained DNA model (oxDNA1 and oxDNA2) implemented as force
-evaluators for [HOOMD-blue](https://hoomd-blue.readthedocs.io). Each nucleotide is
+The oxDNA/oxRNA coarse-grained nucleic-acid model (oxDNA1, oxDNA2, and oxRNA2)
+implemented as force evaluators for [HOOMD-blue](https://hoomd-blue.readthedocs.io). Each nucleotide is
 a single anisotropic rigid body (centre of mass + orientation quaternion) with
 three interaction sites (BACK, BASE, STACK); the potential is the standard oxDNA
 sum of FENE backbone, excluded volume, stacking, hydrogen bonding, cross-stacking,
@@ -24,7 +24,7 @@ src/                       C++ force engine (compiled into oxdna/_engine)
 oxdna/                     pure-Python package (no recompile to change a model)
   io.py                      .top/.conf <-> hoomd.Snapshot (quaternions, charges)
   forces.py                  thin hoomd.md wrappers over the engine
-  model/dna1.py, dna2.py     geometry, parameters, and force-field assembly
+  model/dna1.py, dna2.py, rna2.py   geometry, parameters, force-field assembly
 pytest/                    validation against the oxDNA reference (split_energy.dat)
   _helpers.py                shared snapshot / finite-difference test harness
 ```
@@ -149,5 +149,11 @@ on the GPU.
 
 - oxDNA1 (7 terms) and oxDNA2 (8 terms, grooved geometry + Debye-Hückel): complete
   and validated (sequence-averaged and sequence-dependent), on CPU and GPU.
+- oxRNA2 (`model/rna2.py`, 8 terms): complete and validated (sequence-averaged), on
+  CPU and GPU. Five terms reuse the oxDNA evaluators with RNA geometry/constants; the
+  RNA-specific variants — cross-stacking (θ4 dropped), coaxial stacking (two
+  independent dihedrals from the real backbone vector), and stacking (asymmetric
+  STACK_3/STACK_5 sites + two backbone angles) — are new evaluator/kernel paths that
+  leave the oxDNA paths byte-identical. See `pytest/test_rna2.py`.
 - `bench/benchmark.py` times CPU vs GPU on a tiled system.
-- Not yet implemented: oxRNA, sequence-dependent oxDNA2 tables, exact (COM) virial.
+- Not yet implemented: sequence-dependent oxRNA2 tables, exact (COM) virial, oxRNA1.

@@ -63,6 +63,15 @@ struct oxdna_bonded_params
     Scalar t5_a, t5_b, t5_t0, t5_ts, t5_tc; // f4 theta5 (== theta6)
     Scalar p1_a, p1_b, p1_xc, p1_xs;        // f5 phi1 (== phi2)
 
+    // oxRNA stacking (RNAInteraction::_stacking): asymmetric STACK_3/STACK_5 radial
+    // sites, no theta4, two backbone angles f4(thetaB1)f4(thetaB2) from BBVECTOR
+    // direction pseudo-sites, and phi1/phi2 from the real BACK-BACK vector.
+    bool rna_stacking;
+    vec3<Scalar> stack_3_site, stack_5_site; // p (=B) uses STACK_3, q (=A) uses STACK_5
+    vec3<Scalar> bbvector_3, bbvector_5;     // body-frame direction pseudo-sites
+    Scalar tB1_a, tB1_b, tB1_t0, tB1_ts, tB1_tc; // f4 thetaB1
+    Scalar tB2_a, tB2_b, tB2_t0, tB2_ts, tB2_tc; // f4 thetaB2
+
     OXDNA_BP_HOSTDEVICE oxdna_bonded_params()
         : eps_backbone(0), r0_backbone(0), delta_backbone(0), delta2(0),
           back_site(0, 0, 0), base_site(0, 0, 0), excl_eps(0),
@@ -71,7 +80,11 @@ struct oxdna_bonded_params
           st_blow(0), st_bhigh(0), st_shift_factor(0),
           t4_a(0), t4_b(0), t4_t0(0), t4_ts(0), t4_tc(0),
           t5_a(0), t5_b(0), t5_t0(0), t5_ts(0), t5_tc(0),
-          p1_a(0), p1_b(0), p1_xc(0), p1_xs(0)
+          p1_a(0), p1_b(0), p1_xc(0), p1_xs(0),
+          rna_stacking(false), stack_3_site(0, 0, 0), stack_5_site(0, 0, 0),
+          bbvector_3(0, 0, 0), bbvector_5(0, 0, 0),
+          tB1_a(0), tB1_b(0), tB1_t0(0), tB1_ts(0), tB1_tc(0),
+          tB2_a(0), tB2_b(0), tB2_t0(0), tB2_ts(0), tB2_tc(0)
         {
         for (int k = 0; k < 3; k++)
             bx_sigma[k] = bx_rstar[k] = bx_b[k] = bx_rc[k] = 0;
@@ -139,6 +152,13 @@ struct oxdna_bonded_params
         v["stack_f4_t4"] = pybind11::make_tuple(t4_a, t4_b, t4_t0, t4_ts, t4_tc);
         v["stack_f4_t5"] = pybind11::make_tuple(t5_a, t5_b, t5_t0, t5_ts, t5_tc);
         v["stack_f5_p1"] = pybind11::make_tuple(p1_a, p1_b, p1_xc, p1_xs);
+        v["stack_rna"] = rna_stacking;
+        v["stack_3_site"] = pybind11::make_tuple(stack_3_site.x, stack_3_site.y, stack_3_site.z);
+        v["stack_5_site"] = pybind11::make_tuple(stack_5_site.x, stack_5_site.y, stack_5_site.z);
+        v["stack_bbvector_3"] = pybind11::make_tuple(bbvector_3.x, bbvector_3.y, bbvector_3.z);
+        v["stack_bbvector_5"] = pybind11::make_tuple(bbvector_5.x, bbvector_5.y, bbvector_5.z);
+        v["stack_f4_tB1"] = pybind11::make_tuple(tB1_a, tB1_b, tB1_t0, tB1_ts, tB1_tc);
+        v["stack_f4_tB2"] = pybind11::make_tuple(tB2_a, tB2_b, tB2_t0, tB2_ts, tB2_tc);
         return v;
         }
 
@@ -186,6 +206,17 @@ struct oxdna_bonded_params
         p1_b = p[1].cast<Scalar>();
         p1_xc = p[2].cast<Scalar>();
         p1_xs = p[3].cast<Scalar>();
+
+        rna_stacking = s.contains("stack_rna") && s["stack_rna"].cast<bool>();
+        if (rna_stacking)
+            {
+            stack_3_site = read_vec3(s["stack_3_site"]);
+            stack_5_site = read_vec3(s["stack_5_site"]);
+            bbvector_3 = read_vec3(s["stack_bbvector_3"]);
+            bbvector_5 = read_vec3(s["stack_bbvector_5"]);
+            read5(s["stack_f4_tB1"], tB1_a, tB1_b, tB1_t0, tB1_ts, tB1_tc);
+            read5(s["stack_f4_tB2"], tB2_a, tB2_b, tB2_t0, tB2_ts, tB2_tc);
+            }
         }
     static void read5(pybind11::object o, Scalar& a, Scalar& b, Scalar& t0, Scalar& ts, Scalar& tc)
         {
