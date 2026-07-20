@@ -155,9 +155,15 @@ def snapshot_from_arrays(positions, quaternions, typeids, box, bonds=None,
     """Build a HOOMD snapshot directly from arrays (positions already box-centred).
 
     ``bonds`` is an optional list of (i, j) index pairs. ``charges`` is an optional
-    per-particle charge array (used for oxDNA2 half-charged strand ends).
+    per-particle charge array; when omitted every nucleotide is given **unit
+    charge** (the oxDNA/oxRNA physical default) so the Debye-Huckel term is active.
+    Pass an explicit array for oxDNA2/oxRNA2 half-charged strand ends, or an
+    all-zero array to deliberately disable electrostatics. (Leaving it unset used
+    to silently produce zero charge, i.e. no electrostatics -- an easy footgun.)
     """
     n = len(positions)
+    if charges is None:
+        charges = np.ones(n)
     snap = hoomd.Snapshot()
     if snap.communicator.rank == 0:
         snap.particles.N = n
@@ -167,8 +173,7 @@ def snapshot_from_arrays(positions, quaternions, typeids, box, bonds=None,
         snap.particles.mass[:] = 1.0
         snap.particles.moment_inertia[:] = np.ones((n, 3))
         snap.particles.orientation[:] = quaternions
-        if charges is not None:
-            snap.particles.charge[:] = charges
+        snap.particles.charge[:] = charges
         snap.configuration.box = [box[0], box[1], box[2], 0, 0, 0]
         bonds = bonds or []
         snap.bonds.N = len(bonds)
